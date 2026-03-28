@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.ensemble import RandomForestClassifier
@@ -7,6 +8,8 @@ from sklearn.model_selection import RandomizedSearchCV
 from tabpfn import TabPFNClassifier
 from tqdm import tqdm
 from xgboost import XGBClassifier
+
+from src.metrics import make_fair_weights
 
 RS = 2032026
 
@@ -21,8 +24,37 @@ def extract_features_labels(trainloader):
     return X_train, y_train
 
 
+def fit_xgboost_fair(
+    train,
+    sensitive_train,
+    alpha=0.5,
+    beta=1.0,
+    random_state=RS,
+):
+    baseline_model = get_baselines(
+        None, train, performance_tuning=True, modelchoice="XGBoost"
+    )["XGBoost"]
+    X_train, y_train = extract_features_labels(train)
+    train_prob = baseline_model.predict_proba(X_train)[:, 1]
+
+    # Compute weights using "non-fair model"
+    weights, difficulty, deficits = make_fair_weights(
+        y_true=y_train,
+        y_prob=train_prob,
+        sensitive_attr=sensitive_train,
+        alpha=alpha,
+        beta=beta,
+    )
+
+    # retrain model using "fair weights"
+    tuned_hps = baseline_model.get_params()
+    fair_model = XGBClassifier(**tuned_hps)
+    fair_model.fit(X_train, y_train, sample_weight=weights)
+
+    return fair_model, weights, difficulty, deficits
+
+
 def get_fold_loaders(trainloader, fold, total_folds):
-    """Split the training data into fold-based train and validation loaders."""
     dataset = trainloader.dataset
     total_size = len(dataset)
     fold_size = total_size // total_folds
@@ -48,8 +80,6 @@ def get_fold_loaders(trainloader, fold, total_folds):
 
 
 def modeltune(modelname, input_dim, trainloader, folds=2):
-    """Perform Random Search CV using fold-based validation on the training set."""
-    # Define hyperparameter search space
     if modelname == "Logistic_Regression":
         param_dist = {"C": [0.01, 0.1, 1, 10, 100], "penalty": ["l1", "l2"]}
     elif modelname == "Random_Forest":
@@ -129,26 +159,46 @@ def modeltune(modelname, input_dim, trainloader, folds=2):
         return best_model
 
 
-def get_baselines(input_dim, trainloader, performance_tuning=True):
+def get_baselines(input_dim, trainloader, performance_tuning=True, modelchoice=None):
     if not performance_tuning:
         X, y = extract_features_labels(trainloader)
         mlp = MLP(input_dim)
         mlp.fit(trainloader)
-    models = {
-        "MLP": modeltune("MLP", input_dim, trainloader) if performance_tuning else mlp,
-        "Logistic_Regression": modeltune("Logistic_Regression", input_dim, trainloader)
-        if performance_tuning
-        else LogisticRegression(random_state=RS, max_iter=1000).fit(X, y),
-        "Random_Forest": modeltune("Random_Forest", input_dim, trainloader)
-        if performance_tuning
-        else RandomForestClassifier(random_state=RS).fit(X, y),
-        "XGBoost": modeltune("XGBoost", input_dim, trainloader)
-        if performance_tuning
-        else XGBClassifier(random_state=RS, eval_metric="logloss").fit(X, y),
-        # "TabPFN": TabPFNClassifier(random_state=RS, ignore_pretraining_limits=True).fit(
-        #     X, y
-        # ),
-    }
+    if modelchoice is None:
+        models = {
+            "MLP": modeltune("MLP", input_dim, trainloader)
+            if performance_tuning
+            else mlp,
+            "Logistic_Regression": modeltune(
+                "Logistic_Regression", input_dim, trainloader
+            )
+            if performance_tuning
+            else LogisticRegression(random_state=RS, max_iter=1000).fit(X, y),
+            "Random_Forest": modeltune("Random_Forest", input_dim, trainloader)
+            if performance_tuning
+            else RandomForestClassifier(random_state=RS).fit(X, y),
+            "XGBoost": modeltune("XGBoost", input_dim, trainloader)
+            if performance_tuning
+            else XGBClassifier(random_state=RS, eval_metric="logloss").fit(X, y),
+            # "TabPFN": TabPFNClassifier(random_state=RS, ignore_pretraining_limits=True).fit(
+            #     X, y
+            # ),
+        }
+    else:
+        if modelchoice == "MLP":
+            models = {"MLP": modeltune("MLP", input_dim, trainloader)}
+        elif modelchoice == "Logistic_Regression":
+            models = {
+                "Logistic_Regression": modeltune(
+                    "Logistic_Regression", input_dim, trainloader
+                )
+            }
+        elif modelchoice == "Random_Forest":
+            models = {
+                "Random_Forest": modeltune("Random_Forest", input_dim, trainloader)
+            }
+        elif modelchoice == "XGBoost":
+            models = {"XGBoost": modeltune("XGBoost", input_dim, trainloader)}
     return models
 
 
