@@ -27,24 +27,42 @@ def extract_features_labels(trainloader):
 def fit_xgboost_fair(
     train,
     sensitive_train,
+    baseline_model,
+    attr="race",
     alpha=0.5,
     beta=1.0,
     random_state=RS,
+    allcols=["race", "age", "gender"],
 ):
-    baseline_model = get_baselines(
-        None, train, performance_tuning=True, modelchoice="XGBoost"
-    )["XGBoost"]
     X_train, y_train = extract_features_labels(train)
     train_prob = baseline_model.predict_proba(X_train)[:, 1]
 
-    # Compute weights using "non-fair model"
-    weights, difficulty, deficits = make_fair_weights(
-        y_true=y_train,
-        y_prob=train_prob,
-        sensitive_attr=sensitive_train,
-        alpha=alpha,
-        beta=beta,
-    )
+    # Compute cumulative weights using "non-fair model"
+    if attr == "overall":
+        cumulative_weights = np.zeros_like(y_train, dtype=float)
+        for var in allcols:
+            weights, difficulty, deficits = make_fair_weights(
+                y_true=y_train,
+                y_prob=train_prob,
+                sensitive_attr=sensitive_train[var],
+                alpha=alpha,
+                beta=beta,
+            )
+            cumulative_weights += weights
+        weights = cumulative_weights / len(
+            allcols
+        )  # Average weights across all attributes
+
+    # Compute indiviuals weights using "non-fair model"
+    else:
+        sensitive_train = sensitive_train[attr]
+        weights, difficulty, deficits = make_fair_weights(
+            y_true=y_train,
+            y_prob=train_prob,
+            sensitive_attr=sensitive_train,
+            alpha=alpha,
+            beta=beta,
+        )
 
     # retrain model using "fair weights"
     tuned_hps = baseline_model.get_params()

@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
@@ -70,7 +71,13 @@ def get_dataloaders(data_path, batch_size=64, return_arrays=False):
     train_ds = DiabetesDataset(X_train, y_train, sens_train)
     test_ds = DiabetesDataset(X_test, y_test, sens_test)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        worker_init_fn=lambda id: np.random.seed(42),
+        generator=torch.Generator().manual_seed(42),
+    )
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
     if return_arrays:

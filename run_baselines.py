@@ -61,7 +61,7 @@ def main():
 
     all_results = []
 
-    models = get_baselines(INPUT_DIM, train_loader, performance_tuning=False)
+    models = get_baselines(INPUT_DIM, train_loader, performance_tuning=True)
 
     y_true_list = []
     sens_list = []
@@ -101,10 +101,12 @@ def main():
         )
         all_results.append(res)
 
-    for attr in ["race", "gender", "age"]:
-        fair_model, weights, difficulty, deficits = fit_xgboost_fair(
+    for attr in ["race", "gender", "age", "overall"]:
+        fair_model, _, _, _ = fit_xgboost_fair(
             train=train_loader,
-            sensitive_train=sens_train[attr],
+            sensitive_train=sens_train,
+            baseline_model=models["XGBoost"],
+            attr=attr,
             alpha=0.5,
             beta=1.0,
         )
