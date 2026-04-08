@@ -10,6 +10,7 @@ from tqdm import tqdm
 from xgboost import XGBClassifier
 
 from src.metrics import make_fair_weights
+from tabpfn import TabPFNClassifier
 
 RS = 2032026
 
@@ -177,46 +178,37 @@ def modeltune(modelname, input_dim, trainloader, folds=2):
         return best_model
 
 
-def get_baselines(input_dim, trainloader, performance_tuning=True, modelchoice=None):
+def get_baselines(input_dim, trainloader, X_raw=None, y_raw=None, performance_tuning=True, modelchoice=None):
     if not performance_tuning:
         X, y = extract_features_labels(trainloader)
         mlp = MLP(input_dim)
         mlp.fit(trainloader)
+    
     if modelchoice is None:
         models = {
-            "MLP": modeltune("MLP", input_dim, trainloader)
-            if performance_tuning
-            else mlp,
-            "Logistic_Regression": modeltune(
-                "Logistic_Regression", input_dim, trainloader
-            )
-            if performance_tuning
-            else LogisticRegression(random_state=RS, max_iter=1000).fit(X, y),
-            "Random_Forest": modeltune("Random_Forest", input_dim, trainloader)
-            if performance_tuning
-            else RandomForestClassifier(random_state=RS).fit(X, y),
-            "XGBoost": modeltune("XGBoost", input_dim, trainloader)
-            if performance_tuning
-            else XGBClassifier(random_state=RS, eval_metric="logloss").fit(X, y),
-            # "TabPFN": TabPFNClassifier(random_state=RS, ignore_pretraining_limits=True).fit(
-            #     X, y
-            # ),
+            "MLP": modeltune("MLP", input_dim, trainloader) if performance_tuning else mlp,
+            "Logistic_Regression": modeltune("Logistic_Regression", input_dim, trainloader) if performance_tuning else LogisticRegression(random_state=RS, max_iter=1000).fit(X, y),
+            "Random_Forest": modeltune("Random_Forest", input_dim, trainloader) if performance_tuning else RandomForestClassifier(random_state=RS).fit(X, y),
+            "XGBoost": modeltune("XGBoost", input_dim, trainloader) if performance_tuning else XGBClassifier(random_state=RS, eval_metric="logloss").fit(X, y),
         }
     else:
         if modelchoice == "MLP":
             models = {"MLP": modeltune("MLP", input_dim, trainloader)}
         elif modelchoice == "Logistic_Regression":
-            models = {
-                "Logistic_Regression": modeltune(
-                    "Logistic_Regression", input_dim, trainloader
-                )
-            }
+            models = {"Logistic_Regression": modeltune("Logistic_Regression", input_dim, trainloader)}
         elif modelchoice == "Random_Forest":
-            models = {
-                "Random_Forest": modeltune("Random_Forest", input_dim, trainloader)
-            }
+            models = {"Random_Forest": modeltune("Random_Forest", input_dim, trainloader)}
         elif modelchoice == "XGBoost":
             models = {"XGBoost": modeltune("XGBoost", input_dim, trainloader)}
+
+    if X_raw is not None and y_raw is not None:
+        if modelchoice is None or modelchoice == "TabPFN":
+            print("Fitting TabPFN on raw features (subset N=2000)...")
+            # Using raw features instead of one-hot encoded ones prevents the dimensionality crash
+            tabpfn = TabPFNClassifier(device='cpu', N_ensemble_configurations=32)
+            tabpfn.fit(X_raw[:2000], y_raw[:2000])
+            models["TabPFN"] = tabpfn
+
     return models
 
 
