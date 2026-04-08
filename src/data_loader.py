@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, OrdinalEncoder
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -22,19 +22,15 @@ class DiabetesDataset(Dataset):
 def get_dataloaders(data_path, batch_size=64, return_arrays=False):
     # 1. Load Data
     df = pd.read_csv(data_path)
-
-    # 2. Simple Preprocessing (Handling '?' as NaN)
     df = df.replace("?", pd.NA).dropna(subset=["race", "gender"])
-
-    # 3. Define target (e.g., readmitted <30 days)
     df["target"] = (df["readmitted"] == "<30").astype(int)
 
-    # 4. Extract sensitive attributes for the audit
+    # 4. Extract sensitive attributes 
     sensitive_cols = ["race", "gender", "age"]
     sensitive_data = df[sensitive_cols].reset_index(drop=True)
 
     # 5. Feature Encoding
-    X_raw = df.drop(columns=["target", "readmitted", "encounter_id", "patient_nbr"])
+    X_raw_df = df.drop(columns=["target", "readmitted", "encounter_id", "patient_nbr"])
     num_cols = [
         "num_lab_procedures",
         "num_procedures",
@@ -44,53 +40,41 @@ def get_dataloaders(data_path, batch_size=64, return_arrays=False):
         "number_inpatient",
         "time_in_hospital",
     ]
-    cat_cols = [c for c in X_raw.columns if c not in num_cols]
-    X = pd.get_dummies(X_raw, columns=cat_cols, drop_first=True)
+    cat_cols = [c for c in X_raw_df.columns if c not in num_cols]
+    
+    # ONE-HOT ENCODING 
+    X_oh = pd.get_dummies(X_raw_df, columns=cat_cols, drop_first=True)
+    feature_names_oh = X_oh.columns.tolist()
+
+    # ORDINAL ENCODING PATH FOR TABPFN 
+    X_raw_encoded = X_raw_df.copy()
+    encoder = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
+    X_raw_encoded[cat_cols] = encoder.fit_transform(X_raw_df[cat_cols].astype(str))
+    feature_names_raw = X_raw_encoded.columns.tolist()
+    
     y = df["target"].values
 
-    feature_names = X.columns.tolist()
 
     # 6. Split & Scale
-    X_train, X_test, y_train, y_test, sens_train, sens_test = train_test_split(
-        X.values,
-        y,
-        sensitive_data,
-        test_size=0.2,
-        stratify=y,
-        random_state=42,
+    # SYNCHRONIZED SPLIT FOR ONE-HOT AND RAW DATA
+    X_train_oh, X_test_oh, X_train_raw, X_test_raw, y_train, y_test, sens_train, sens_test = train_test_split(
+        X_oh.values, X_raw_encoded.values, y, sensitive_data,
+        test_size=0.2, stratify=y, random_state=42
     )
-
-    sens_train = sens_train.reset_index(drop=True)
-    sens_test = sens_test.reset_index(drop=True)
-
+    
     scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    X_train_oh = scaler.fit_transform(X_train_oh)
+    X_test_oh = scaler.transform(X_test_oh)
 
-    # 7. Create Loaders
-    train_ds = DiabetesDataset(X_train, y_train, sens_train)
-    test_ds = DiabetesDataset(X_test, y_test, sens_test)
+    train_ds = DiabetesDataset(X_train_oh, y_train, sens_train.reset_index(drop=True))
+    test_ds = DiabetesDataset(X_test_oh, y_test, sens_test.reset_index(drop=True))
 
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        worker_init_fn=lambda id: np.random.seed(42),
-        generator=torch.Generator().manual_seed(42),
-    )
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
+
     if return_arrays:
-        return (
-            train_loader,
-            test_loader,
-            X_train,
-            X_test,
-            y_train,
-            y_test,
-            sens_train,
-            sens_test,
-            feature_names,
-        )
+        return (train_loader, test_loader, X_train_oh, X_test_oh, X_train_raw, X_test_raw, 
+                y_train, y_test, sens_train, sens_test, feature_names_oh, feature_names_raw)
 
     return train_loader, test_loader
