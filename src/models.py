@@ -187,7 +187,7 @@ def get_baselines(input_dim, trainloader, X_raw=None, y_raw=None, performance_tu
     if modelchoice is None:
         models = {
             "MLP": modeltune("MLP", input_dim, trainloader) if performance_tuning else mlp,
-            "Logistic_Regression": modeltune("Logistic_Regression", input_dim, trainloader) if performance_tuning else LogisticRegression(random_state=RS, max_iter=1000).fit(X, y),
+            "Logistic_Regression": modeltune("Logistic_Regression", input_dim, trainloader) if performance_tuning else LogisticRegression(random_state=RS, max_iter=1000, penalty='l2').fit(X, y),
             "Random_Forest": modeltune("Random_Forest", input_dim, trainloader) if performance_tuning else RandomForestClassifier(random_state=RS).fit(X, y),
             "XGBoost": modeltune("XGBoost", input_dim, trainloader) if performance_tuning else XGBClassifier(random_state=RS, eval_metric="logloss").fit(X, y),
         }
@@ -204,8 +204,8 @@ def get_baselines(input_dim, trainloader, X_raw=None, y_raw=None, performance_tu
     if X_raw is not None and y_raw is not None:
         if modelchoice is None or modelchoice == "TabPFN":
             print("Fitting TabPFN on raw features (subset N=2000)...")
-            # Using raw features instead of one-hot encoded ones prevents the dimensionality crash
-            tabpfn = TabPFNClassifier(device='cpu', N_ensemble_configurations=32)
+            # Changed N_ensemble_configurations to n_estimators for compatibility with TabPFN v2.0+
+            tabpfn = TabPFNClassifier(device='cpu', n_estimators=32)
             tabpfn.fit(X_raw[:2000], y_raw[:2000])
             models["TabPFN"] = tabpfn
 
